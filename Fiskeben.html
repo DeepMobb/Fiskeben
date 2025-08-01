@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <title>Fiskeben VAM</title>
+  <meta name="viewport" content="width=1122, initial-scale=1.0">
+  <style>
+    body {font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0;}
+    .container {max-width: 1190px; margin: 25px auto; background: #fff; border-radius: 10px; padding: 6px; box-shadow: 0 4px 24px rgba(0,0,0,0.13);}
+    .diagram-container {position: relative; width: 1122px; height: 793px; background: #fff; border: 1.1px solid #eee; margin: 0 auto; box-sizing: border-box; overflow: hidden; padding: 0;}
+
+    .controls {margin: 18px 0 8px 0; display: flex; gap: 18px; align-items: center; font-size: 21px;}
+
+    #problemBox {
+      position: absolute; left: 825px; top: 105px; width: 250px; min-width: 110px; max-width: 350px;
+      min-height: 80px;
+      padding:12px 14px; color:crimson; background: #fff;
+      border: 2.5px solid crimson; border-radius: 9px; font-size: 22px; font-weight: bold;
+      text-align: center; z-index: 999; overflow: visible;
+      outline: none; box-sizing: border-box; resize: vertical;
+      word-break: break-word; display: flex; justify-content: center; align-items: center;
+      transition: color 0.2s;
+    }
+    #problemBox.placeholder { color: #c4a6a6; }
+
+    .custom-popup {display: none; position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); background: #fff;
+      border: 2px solid #2a4b7c; padding: 11px 18px 13px 18px; z-index: 10; border-radius: 8px;
+      min-width: 250px; box-shadow: 0 6px 20px rgba(60,60,80,0.15); text-align: center;}
+    .custom-popup input {font-size: 20px; padding: 7px; margin-bottom: 11px; width: 92%; border: 1px solid #ccc; border-radius: 5px;}
+    .custom-popup button {font-size: 18px; margin: 0 4px 0 4px; padding: 7px 18px; border-radius: 6px; border: none; background: #2a4b7c; color: #fff; cursor: pointer;}
+    .custom-popup button:last-child {background: #c32e32;}
+    .edit-cause-input {
+      position: absolute; font-size: 20px; z-index: 20; border: 1.5px solid #2a4b7c; border-radius: 5px; background: #ffffeb;
+      padding: 2px 7px; min-width: 60px; max-width: 240px;
+    }
+    .causeBox {
+      position: absolute;
+      min-width: 40px;
+      width: 220px;
+      max-width: 220px;
+      font-size: 18px;
+      word-break: break-word;
+      color: #2a4b7c;
+      font-weight: bold;
+      background: #fff9e4;
+      padding: 4px 4px;
+      border: 1px solid #a8a7a7;
+      border-radius: 7px;
+      display: block;
+      white-space: pre-wrap;
+      text-align: left;
+      cursor: move;
+      user-select: none;
+      overflow-wrap: break-word;
+      overflow-x: hidden;
+      height: auto;
+      max-height: 420px;
+      overflow-y: auto;
+      resize: vertical;
+      box-sizing: border-box;
+      z-index: 20;
+    }
+    .causeBox.editing { color:#dd5050; background: #fff9e0; border: 1px dotted #333; }
+    @media print {
+      .controls {display: none !important;}
+      .custom-popup, #popup, #problemBox {box-shadow:none!important;}
+      body, .container, .diagram-container {box-shadow: none !important; background: #fff !important;
+        width: 1122px !important; height: 793px !important; margin: 0 !important; padding: 0 !important;}
+    }
+  </style>
+</head>
+<body>
+<h1 style="text-align:center; margin-top:20px; color:#283c6c;">fiskeben VAM</h1>
+<div class="container">
+  <div class="diagram-container" id="diagramArea">
+    <svg id="fishboneSvg" width="1122" height="793" style="display: block; margin: auto; background: transparent; cursor: crosshair; position: absolute; left: 0; top: 0; z-index:0;">
+      <g id="ishikawa"></g>
+    </svg>
+    <div id="causes"></div>
+    <div id="problemBox" contenteditable="true" data-placeholder="Problemet skrives her" title="Skriv problemet her (bliver på PDF)" class="" style="height: 80px;"></div>
+  </div>
+  <div class="controls">
+    <span>TIP: Klik på fiskebenet for at placere/rykke/redigere dine årsager – og dobbelklik for at redigere en årsag.</span>
+    <button onclick="saveAsPDF()">Gem som PDF</button>
+    <button onclick="saveProject()">Gem projekt</button>
+    <input type="file" id="loadProjectFile" style="display:none" accept=".json">
+    <button onclick="document.getElementById('loadProjectFile').click()">Åbn projekt</button>
+  </div>
+</div>
+<div id="popup" class="custom-popup" style="display: none;">
+  <input type="text" id="popupText" placeholder="Skriv årsag her">
+  <br>
+  <button onclick="submitText()">Tilføj</button>
+  <button onclick="cancelText()">Annuller</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  // Ishikawa fiskeben tegnes
+  const rygX0 = 370, rygX1 = 900, rygY = 396;
+  const boneLen = 230+76;
+  const step = (rygX1-rygX0)/2;
+  const boneAngle = 60 * Math.PI/180;
+  const mNames = ["Metode","Maskine","Miljø","Menneske","Måling","Materiale"];
+  let svgBones = "";
+  svgBones += `<line x1="${rygX0-283}" y1="${rygY}" x2="${rygX1+13}" y2="${rygY}" stroke="black" stroke-width="10" />`;
+  svgBones += `<polygon points="${rygX1+14},${rygY-14} ${rygX1+74},${rygY} ${rygX1+14},${rygY+14}" fill="crimson"/>`;
+  for(let i=0;i<3;i++){
+    let xBase = rygX0 + i * step;
+    let x2top = xBase - boneLen*Math.cos(boneAngle);
+    let y2top = rygY - boneLen*Math.sin(boneAngle);
+    svgBones += `<line x1="${xBase}" y1="${rygY}" x2="${x2top}" y2="${y2top}" stroke="black" stroke-width="6"/>`;
+    svgBones += `<text x="${x2top-50}" y="${y2top-20}" font-size="28" font-weight="bold" fill="#283c6c">${mNames[i]}</text>`;
+    let x2bot = xBase - boneLen*Math.cos(boneAngle);
+    let y2bot = rygY + boneLen*Math.sin(boneAngle);
+    svgBones += `<line x1="${xBase}" y1="${rygY}" x2="${x2bot}" y2="${y2bot}" stroke="black" stroke-width="6"/>`;
+    svgBones += `<text x="${x2bot-50}" y="${y2bot+38}" font-size="28" font-weight="bold" fill="#283c6c">${mNames[i+3]}</text>`;
+  }
+  document.getElementById("ishikawa").innerHTML = svgBones;
+
+  // Problemfelt placeholder og vokser automatisk!
+  const problemBox = document.getElementById('problemBox');
+  function adjustProblemBoxHeight() {
+    problemBox.style.height = "auto";
+    problemBox.style.height = problemBox.scrollHeight + "px";
+  }
+  problemBox.addEventListener('focus', function () {
+    if (problemBox.classList.contains('placeholder')) {
+      problemBox.textContent = "";
+      problemBox.classList.remove('placeholder');
+    }
+  });
+  problemBox.addEventListener('blur', function() {
+    if(problemBox.textContent.trim() === "") {
+      problemBox.classList.add('placeholder');
+      problemBox.textContent = problemBox.getAttribute('data-placeholder');
+      problemBox.style.height = "80px";
+    }
+  });
+  problemBox.addEventListener('input', function () {
+    adjustProblemBoxHeight();
+    if (!problemBox.textContent.trim()) {
+      problemBox.classList.add('placeholder');
+      problemBox.textContent = problemBox.getAttribute('data-placeholder');
+      problemBox.style.height = "80px";
+    }
+  });
+  if(problemBox.textContent.trim() === "") {
+    problemBox.classList.add('placeholder');
+    problemBox.textContent = problemBox.getAttribute('data-placeholder');
+    problemBox.style.height = "80px";
+  } else {
+    adjustProblemBoxHeight();
+  }
+
+  // Årsagsbokse
+  const diagram = document.getElementById('diagramArea');
+  const causesDiv = document.getElementById('causes');
+  let clickCoords = {x:0,y:0}, dragging = false, dragTarget = null, dragOffset = {x:0,y:0}, editInput=null;
+
+  // Find klikkoord i diagram-container
+  diagram.addEventListener('mousedown', function(e) {
+    if(e.target.classList.contains("causeBox")) {
+      if(e.detail === 2) { openEditCauseInput(e.target); return; }
+      dragging = true; dragTarget = e.target;
+      dragTarget.classList.add('editing');
+      const rect = dragTarget.getBoundingClientRect();
+      dragOffset.x = e.clientX - rect.left;
+      dragOffset.y = e.clientY - rect.top;
+      diagram.style.cursor = "grabbing";
+      return;
+    }
+    // tjek om man rammer svg-området (fiskebensbaggrunden)
+    if(e.target.tagName !== "svg" && e.target.parentNode.id !== "ishikawa") return;
+    document.getElementById('popupText').value = "";
+    const rect = diagram.getBoundingClientRect();
+    clickCoords = {x: e.clientX - rect.left, y: e.clientY - rect.top};
+    const popup = document.getElementById('popup');
+    popup.style.display = 'block';
+    popup.style.left = (e.pageX+5) + 'px';
+    popup.style.top = (e.pageY-20) + 'px';
+    popup.style.transform = 'none';
+    setTimeout(() => { document.getElementById('popupText').focus(); }, 30);
+  });
+  diagram.addEventListener('mousemove', function(e) {
+    if(dragging && dragTarget) {
+      const rect = diagram.getBoundingClientRect();
+      let x = e.clientX - rect.left - dragOffset.x;
+      let y = e.clientY - rect.top  - dragOffset.y;
+      dragTarget.style.left = x+"px";
+      dragTarget.style.top = y+"px";
+    }
+  });
+  diagram.addEventListener('mouseup', function(e) {
+    if (dragging && dragTarget) {
+      dragTarget.classList.remove('editing');
+      dragging = false; dragTarget = null;
+      diagram.style.cursor = "crosshair";
+    }
+  });
+
+  function submitText() {
+    let text = document.getElementById('popupText').value.trim();
+    if (!text) return;
+    if(text.length > 1000) text = text.substring(0,1000) + "…";
+    const div = document.createElement("div");
+    div.className="causeBox";
+    div.style.left = clickCoords.x + "px";
+    div.style.top = clickCoords.y + "px";
+    div.textContent = text;
+    div.title = "Dobbeltklik for at redigere";
+    div.ondblclick = (e) => openEditCauseInput(div);
+    causesDiv.appendChild(div);
+    closePopup();
+  }
+  function cancelText() { closePopup(); }
+  function closePopup() {
+    const popup = document.getElementById('popup');
+    popup.style.display = 'none';
+    popup.style.left = '50%';
+    popup.style.top  = '50%';
+    popup.style.transform = 'translate(-50%, -50%)';
+  }
+  document.getElementById('popupText').addEventListener('keydown', function(e) {
+    if (e.key === "Enter") { submitText();}
+  });
+
+  function openEditCauseInput(htmlDiv){
+    if(editInput) { editInput.remove(); editInput = null; }
+    const diagramRect = diagram.getBoundingClientRect();
+    const divRect = htmlDiv.getBoundingClientRect();
+    editInput = document.createElement('textarea');
+    editInput.value = htmlDiv.textContent;
+    editInput.className = "edit-cause-input";
+    editInput.maxLength = 1000;
+    editInput.style.left = (divRect.left + window.scrollX) + "px";
+    editInput.style.top  = (divRect.top  + window.scrollY) + "px";
+    editInput.style.width = "210px"; 
+    editInput.style.height = "100px";
+    editInput.style.resize = "vertical";
+    editInput.addEventListener('keydown', function(ev){
+      if(ev.key === 'Enter' && !ev.shiftKey) { saveEdit(htmlDiv); ev.preventDefault(); }
+      if(ev.key === 'Escape') { removeEditInput(); }
+    });
+    editInput.addEventListener('blur', function(){ saveEdit(htmlDiv); });
+    // Tilføj slet-knap direkte i edit
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '🗑️ Slet';
+    delBtn.style = 'position: absolute; top: 3px; right: -63px; font-size: 17px; background: #ebebeb; color: #c23; border: 1px solid #c23; border-radius:5px; padding: 3px 8px; cursor:pointer;';
+    delBtn.onclick = function(ev) {
+      ev.preventDefault();
+      htmlDiv.remove();
+      removeEditInput();
+    };
+    document.body.appendChild(editInput);
+    document.body.appendChild(delBtn);
+    editInput.focus();
+    editInput.select();
+    editInput._delBtn = delBtn;
+  }
+  function saveEdit(htmlDiv){
+    if(editInput && htmlDiv) {
+      let txt = editInput.value;
+      if(txt.length > 1000) txt = txt.substring(0,1000) + "…";
+      htmlDiv.textContent = txt;
+      removeEditInput();
+    }
+  }
+  function removeEditInput() { 
+    if(editInput) {
+      if(editInput._delBtn) editInput._delBtn.remove();
+      editInput.remove(); editInput=null;
+    }
+  }
+  window.addEventListener('mousedown', function(e){
+    if(editInput && !editInput.contains(e.target)) removeEditInput();
+  });
+
+  // PDF eksport: nu er alt 100% HTML, derfor ingen overlay eller hack nødvendigt!
+  function saveAsPDF() {
+    adjustProblemBoxHeight();
+    html2pdf().from(document.getElementById('diagramArea')).set({
+      margin: 0,
+      filename: 'fiskenben.pdf',
+      html2canvas: { scale: 2 },
+      jsPDF: { format: 'a4', orientation: 'landscape' }
+    }).save();
+  }
+
+  // GEM/ÅBN PROJEKT
+  function saveProject() {
+    let causes = [];
+    document.querySelectorAll("#causes .causeBox").forEach(div=>{
+      causes.push({
+        x: parseInt(div.style.left,10)||0,
+        y: parseInt(div.style.top,10)||0,
+        text: div.textContent
+      });
+    });
+    const data = {
+      problem: (problemBox.classList.contains('placeholder') ? "" : problemBox.innerHTML),
+      causes: causes
+    };
+    const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = "ishikawa-projekt.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  document.getElementById('loadProjectFile').addEventListener('change', function(evt){
+    const f = evt.target.files[0];
+    if(!f) return;
+    const reader = new FileReader();
+    reader.onload = function(ev){
+      try {
+        const data = JSON.parse(ev.target.result);
+        if(data.problem !== undefined) {
+          problemBox.innerHTML = data.problem;
+          problemBox.classList.remove('placeholder');
+          adjustProblemBoxHeight();
+        } else {
+          if(problemBox.textContent.trim() === "") {
+            problemBox.classList.add('placeholder');
+            problemBox.textContent = problemBox.getAttribute('data-placeholder');
+            problemBox.style.height = "80px";
+          }
+        }
+        causesDiv.innerHTML = '';
+        if(Array.isArray(data.causes)) {
+          data.causes.forEach(cause=>{
+            const div = document.createElement("div");
+            div.className = "causeBox";
+            div.style.left = cause.x + "px";
+            div.style.top  = cause.y + "px";
+            div.textContent = cause.text;
+            div.title = "Dobbeltklik for at redigere";
+            div.ondblclick = (e) => openEditCauseInput(div);
+            causesDiv.appendChild(div);
+          });
+        }
+      } catch(e) {
+        alert("Kunne ikke indlæse projektfilen! ("+e.message+")");
+      }
+    };
+    reader.readAsText(f);
+    evt.target.value = "";
+  });
+</script>
+</body>
+</html>
